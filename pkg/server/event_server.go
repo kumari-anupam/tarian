@@ -14,9 +14,10 @@ import (
 // EventServer handles gRPC calls related to event ingestion and retrieval.
 type EventServer struct {
 	tarianpb.UnimplementedEventServer
-	eventStore     store.EventStore
-	ingestionQueue protoqueue.QueuePublisher
-	logger         *logrus.Logger
+	eventStore                      store.EventStore
+	ingestionQueue                  protoqueue.QueuePublisher
+	ingestionQueueForEventDetection protoqueue.QueuePublisher
+	logger                          *logrus.Logger
 }
 
 // NewEventServer creates a new EventServer instance.
@@ -28,11 +29,12 @@ type EventServer struct {
 //
 // Returns:
 // - *EventServer: A new instance of EventServer.
-func NewEventServer(logger *logrus.Logger, s store.EventStore, ingestionQueue protoqueue.QueuePublisher) *EventServer {
+func NewEventServer(logger *logrus.Logger, s store.EventStore, ingestionQueue protoqueue.QueuePublisher, ingestionQueueForEventDetection protoqueue.QueuePublisher) *EventServer {
 	return &EventServer{
-		eventStore:     s,
-		ingestionQueue: ingestionQueue,
-		logger:         logger,
+		eventStore:                      s,
+		ingestionQueue:                  ingestionQueue,
+		ingestionQueueForEventDetection: ingestionQueueForEventDetection,
+		logger:                          logger,
 	}
 }
 
@@ -48,14 +50,19 @@ func NewEventServer(logger *logrus.Logger, s store.EventStore, ingestionQueue pr
 func (es *EventServer) IngestEvent(ctx context.Context, request *tarianpb.IngestEventRequest) (*tarianpb.IngestEventResponse, error) {
 	es.logger.WithFields(logrus.Fields{
 		"request": request,
-	}).Debug("ingest event")
+	}).Trace("ingest event")
 
 	event := request.GetEvent()
 	if event == nil {
 		return nil, status.Error(codes.InvalidArgument, "required event is empty")
 	}
 
-	err := es.ingestionQueue.Publish(request.GetEvent())
+	var err error
+	if event.Type == tarianpb.EventTypeDetection {
+		err = es.ingestionQueueForEventDetection.Publish(request.GetEvent())
+	} else {
+		err = es.ingestionQueue.Publish(request.GetEvent())
+	}
 
 	if err != nil {
 		es.logger.WithError(err).Error("error while handling ingest event")
